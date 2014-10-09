@@ -34,7 +34,17 @@
 #include <pico_stack.h>
 #include <pico_socket.h>
 
+#include <cv.h>
+#include <highgui.h>
+
 #define BSIZE   2048
+
+IplImage* img = 0;
+IplImage *img_gray = 0;
+
+unsigned char* rawdata = NULL;
+unsigned char* data_ptr = NULL;
+unsigned char* end_ptr = NULL;
 
 struct {
 	char *if_mac;
@@ -47,9 +57,6 @@ void setup_tcp_app();
 void pico_netmap_destroy(struct pico_device *dev);
 struct pico_device *pico_netmap_create(char *interface, char *name, uint8_t *mac);
 
-static char recvbuf[BSIZE];
-static int pos  = 0;
-static int len  = 0;
 static int flag = 0;
 
 void
@@ -63,53 +70,26 @@ deferred_exit(pico_time __attribute__((unused)) now, void *arg) {
 }
 
 int
-send_tcpecho(struct pico_socket *s) {
-	int w, ww = 0;
-
-	if (len > pos) {
-		do {
-			w = pico_socket_write(s, recvbuf + pos, len - pos);
-			if (w > 0) {
-				pos += w;
-				ww += w;
-				if (pos >= len) {
-					pos = 0;
-					len = 0;
-				}
-			}
-		} while((w > 0) && (pos < len));
+send_tcpimg(struct pico_socket* s) {
+	
+	int bytes = pico_socket_write(s, (void*)data_ptr, (int)end_ptr-(int)data_ptr);
+	if(bytes < 0) {
+		printf("Pico socket write failed. error = %i\n", pico_err);
 	}
 
-	return ww;
+	printf("%i bytes sent.\n", bytes);
+	data_ptr += bytes;
+	if (data_ptr < end_ptr)
+		return 0;
+	else
+		return 1;
 }
 
 void
-cb_tcpecho(uint16_t ev, struct pico_socket *s) {
+cb_tcpconnect(uint16_t ev, struct pico_socket *s) {
 	int r = 0;
 
 	printf("tcpecho> wakeup ev=%u\n", ev);
-
-	if (ev & PICO_SOCK_EV_RD) {
-		if (flag & PICO_SOCK_EV_CLOSE) {
-			printf("SOCKET> EV_RD, FIN RECEIVED\n");
-		}
-
-		while (len < BSIZE) {
-			r = pico_socket_read(s, recvbuf + len, BSIZE - len);
-			if (r > 0) {
-				len += r;
-				flag &= ~(PICO_SOCK_EV_RD);
-			} else {
-				flag |= PICO_SOCK_EV_RD;
-				break;
-			}
-		}
-
-		if (flag & PICO_SOCK_EV_WR) {
-			flag &= ~PICO_SOCK_EV_WR;
-			send_tcpecho(s);
-		}
-	}
 
 	if (ev & PICO_SOCK_EV_CONN) {
 		struct pico_socket *sock_a = { 0 };
@@ -122,6 +102,15 @@ cb_tcpecho(uint16_t ev, struct pico_socket *s) {
 		pico_ipv4_to_string(peer, orig.addr);
 		printf("Connection established with %s:%d.\n", peer, short_be(port));
 		pico_socket_setoption(sock_a, PICO_TCP_NODELAY, &yes);
+
+		printf("Image size:\n %i\n", img_gray->imageSize);
+
+
+		cvGetRawData(img_gray, &rawdata, NULL, NULL);
+		data_ptr = rawdata;
+		end_ptr = rawdata + img_gray->imageSize;
+
+		flag |= PICO_SOCK_EV_WR;
 	}
 
 	if (ev & PICO_SOCK_EV_FIN) {
@@ -143,12 +132,13 @@ cb_tcpecho(uint16_t ev, struct pico_socket *s) {
 	}
 
 	if (ev & PICO_SOCK_EV_WR) {
-		r = send_tcpecho(s);
+		r = send_tcpimg(s);
 
 		if (r == 0) {
 			flag |= PICO_SOCK_EV_WR;
 		} else {
 			flag &= (~PICO_SOCK_EV_WR);
+			pico_socket_close(s);
 		}
 	}
 }
@@ -164,7 +154,7 @@ setup_tcp_app() {
 	port = short_be(atoi(config.port));
 	bzero(&address, sizeof(address));
 
-	listen_socket = pico_socket_open(PICO_PROTO_IPV4, PICO_PROTO_TCP, &cb_tcpecho);
+	listen_socket = pico_socket_open(PICO_PROTO_IPV4, PICO_PROTO_TCP, &cb_tcpconnect);
 	if (!listen_socket) {
 		printf("cannot open socket: %s", strerror(pico_err));
 		exit(1);
@@ -286,6 +276,9 @@ init_picotcp() {
 int
 main(int argc, char *argv[]) {
 
+	char* window_name = "Video Streamer";
+	CvCapture* capture = 0;
+
 	if (argc < 4) {
 		printf("usage: %s if_name if_mac if_addr port\n", argv[0]);
 		exit(1);
@@ -298,6 +291,26 @@ main(int argc, char *argv[]) {
 
 	init_picotcp();
 	setup_tcp_app();
+	
+	capture = cvCaptureFromCAM(0);
+	if (!capture) {
+		printf("No camera detected.\n");
+		return -1;
+	}
+
+	img = cvQueryFrame(capture);
+	CvSize size = cvGetSize(img);
+	printf("size img WIDTH:%i HEIGTH:%i\n", size.width, size.height); 
+	img_gray = cvCreateImage(cvGetSize(img),IPL_DEPTH_8U,1);
+	cvCvtColor(img,img_gray,CV_RGB2GRAY);
+	if(img != 0) {
+		printf("Image is captured\n");
+		//cvShowImage(window_name, img_gray);
+		//cvWaitKey(1000);
+	}
+
+	cvReleaseCapture(&capture);
+	cvDestroyWindow(window_name);
 
 	pico_stack_loop();
 

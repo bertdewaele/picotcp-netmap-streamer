@@ -1,6 +1,11 @@
 CC=gcc
+
 CFLAGS=-c -Wall -Wextra -Os -I deps/picotcp/build/include -I deps/netmap/sys
+CFLAGS+=`pkg-config --cflags opencv`
+
 LDFLAGS=-L deps/picotcp/build/lib -lpicotcp
+LDFLAGS+=`pkg-config --libs opencv` -lm
+
 SOURCES=nm-picotcp.c
 OBJECTS=$(SOURCES:.c=.o)
 EXECUTABLE=nm-picotcp
