@@ -131,7 +131,7 @@ cb_tcpconnect(uint16_t ev, struct pico_socket *s) {
 		if (!is_sending_image)
 		{
 			int imgsize= 0;
-			rawdata = grab_raw_data(1, 1, &imgsize);	
+			rawdata = grab_raw_data(0.5, 1, &imgsize);	
 
 			if(!rawdata) {
 				printf("RAW DATA NOT RETRIEVED\n");

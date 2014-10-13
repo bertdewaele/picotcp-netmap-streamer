@@ -30,6 +30,13 @@ IplImage* grab_image(const int scale, const int convert_grayscale)
 	} else {
 		printf("Image captured.\n");
 	}
+
+	if (scale != 1) {
+		CvSize size = {.width =  scale * image->width, .height = scale * image->height};
+		IplImage *img_resize = cvCreateImage(size, IPL_DEPTH_8U, 1);
+		cvResize(image, img_resize, CV_INTER_LINEAR); 
+		image = img_resize;
+	}
 	
 	if (convert_grayscale) {
 		IplImage *img_gray = cvCreateImage(cvGetSize(image), IPL_DEPTH_8U, 1);
