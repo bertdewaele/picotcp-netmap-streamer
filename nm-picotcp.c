@@ -51,6 +51,7 @@ struct {
 	char *if_addr;
 	char *port;
 	int cam_device;
+	double scale_factor;
 } config;
 
 void setup_tcp_app();
@@ -131,7 +132,7 @@ cb_tcpconnect(uint16_t ev, struct pico_socket *s) {
 		if (!is_sending_image)
 		{
 			int imgsize= 0;
-			rawdata = grab_raw_data(0.5, 1, &imgsize);	
+			rawdata = grab_raw_data(config.scale_factor, 1, &imgsize);	
 
 			if(!rawdata) {
 				printf("RAW DATA NOT RETRIEVED\n");
@@ -288,8 +289,8 @@ init_picotcp() {
 int
 main(int argc, char *argv[]) {
 
-	if (argc < 5) {
-		printf("usage: %s if_name if_mac if_addr port cam_device\n", argv[0]);
+	if (argc < 6) {
+		printf("usage: %s if_name if_mac if_addr port cam_device scale_factor\n", argv[0]);
 		exit(1);
 	}
 
@@ -298,6 +299,8 @@ main(int argc, char *argv[]) {
 	config.if_addr = argv[3];
 	config.port    = argv[4];
 	config.cam_device = strtol(argv[5], NULL, 10);
+	sscanf(argv[6], "%lf", &(config.scale_factor));
+
 	init_picotcp();
 	setup_tcp_app();
 
