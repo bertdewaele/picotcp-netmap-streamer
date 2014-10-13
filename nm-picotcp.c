@@ -36,11 +36,9 @@
 
 #include <cv.h>
 #include <highgui.h>
+#include <videostream.h>
 
 #define BSIZE   2048
-
-IplImage* img = 0;
-IplImage *img_gray = 0;
 
 unsigned char* rawdata = NULL;
 unsigned char* data_ptr = NULL;
@@ -78,6 +76,7 @@ send_tcpimg(struct pico_socket* s) {
 	}
 
 	printf("%i bytes sent.\n", bytes);
+
 	data_ptr += bytes;
 	if (data_ptr < end_ptr)
 		return 0;
@@ -97,18 +96,23 @@ cb_tcpconnect(uint16_t ev, struct pico_socket *s) {
 		uint16_t port              = 0;
 		char peer[30]              = { 0 };
 		int yes                    = 1;
+		int imgsize = 0;
 
 		sock_a = pico_socket_accept(s, &orig, &port);
 		pico_ipv4_to_string(peer, orig.addr);
 		printf("Connection established with %s:%d.\n", peer, short_be(port));
 		pico_socket_setoption(sock_a, PICO_TCP_NODELAY, &yes);
 
-		printf("Image size:\n %i\n", img_gray->imageSize);
+		rawdata = grab_raw_data(1, 1, &imgsize);	
 
+		if(!rawdata) {
+			printf("RAW DATA NOT RETRIEVED\n");
+		} else {
+			printf("RAW DATA RETRIEVED\n");
+		}
 
-		cvGetRawData(img_gray, &rawdata, NULL, NULL);
 		data_ptr = rawdata;
-		end_ptr = rawdata + img_gray->imageSize;
+		end_ptr = rawdata + imgsize; 
 
 		flag |= PICO_SOCK_EV_WR;
 	}
@@ -276,9 +280,6 @@ init_picotcp() {
 int
 main(int argc, char *argv[]) {
 
-	char* window_name = "Video Streamer";
-	CvCapture* capture = 0;
-
 	if (argc < 4) {
 		printf("usage: %s if_name if_mac if_addr port\n", argv[0]);
 		exit(1);
@@ -291,28 +292,13 @@ main(int argc, char *argv[]) {
 
 	init_picotcp();
 	setup_tcp_app();
-	
-	capture = cvCaptureFromCAM(0);
-	if (!capture) {
-		printf("No camera detected.\n");
+
+	if (setup_capture(0))
 		return -1;
-	}
-
-	img = cvQueryFrame(capture);
-	CvSize size = cvGetSize(img);
-	printf("size img WIDTH:%i HEIGTH:%i\n", size.width, size.height); 
-	img_gray = cvCreateImage(cvGetSize(img),IPL_DEPTH_8U,1);
-	cvCvtColor(img,img_gray,CV_RGB2GRAY);
-	if(img != 0) {
-		printf("Image is captured\n");
-		//cvShowImage(window_name, img_gray);
-		//cvWaitKey(1000);
-	}
-
-	cvReleaseCapture(&capture);
-	cvDestroyWindow(window_name);
 
 	pico_stack_loop();
+
+	clean_up_stream();
 
 	return 0;
 }
