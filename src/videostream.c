@@ -20,7 +20,7 @@ setup_capture(const int device)
 	return 0;
 }
 
-IplImage* grab_image(const int scale, const int convert_grayscale)
+IplImage* grab_image(const double scale, const int convert_grayscale)
 {
 	IplImage* image = cvQueryFrame(capture);
 
@@ -38,6 +38,7 @@ IplImage* grab_image(const int scale, const int convert_grayscale)
 	}
 	
 	if (scale != 1) {
+		printf("new width = %f. new heigth = %f\n", scale * image->width, scale * image->height);
 		CvSize size = {.width =  scale * image->width, .height = scale * image->height};
 		IplImage *img_resize = cvCreateImage(size, IPL_DEPTH_8U, 1);
 		cvResize(image, img_resize, CV_INTER_LINEAR); 
@@ -48,7 +49,7 @@ IplImage* grab_image(const int scale, const int convert_grayscale)
 }
 
 unsigned char*
-grab_raw_data(const int scale, const int convert_grayscale, int* imagesize)
+grab_raw_data(const double scale, const int convert_grayscale, int* imagesize)
 {
 	IplImage *image = grab_image(scale, convert_grayscale);
 
