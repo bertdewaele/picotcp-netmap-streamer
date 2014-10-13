@@ -43,12 +43,14 @@
 unsigned char* rawdata = NULL;
 unsigned char* data_ptr = NULL;
 unsigned char* end_ptr = NULL;
+int is_sending_image=0;
 
 struct {
 	char *if_mac;
 	char *if_name;
 	char *if_addr;
 	char *port;
+	int cam_device;
 } config;
 
 void setup_tcp_app();
@@ -67,15 +69,16 @@ deferred_exit(pico_time __attribute__((unused)) now, void *arg) {
 	exit(0);
 }
 
+
 int
 send_tcpimg(struct pico_socket* s) {
 	
-	int bytes = pico_socket_write(s, (void*)data_ptr, (int)end_ptr-(int)data_ptr);
+	int bytes = pico_socket_write(s, (void*)data_ptr, (int)(end_ptr-data_ptr));
 	if(bytes < 0) {
 		printf("Pico socket write failed. error = %i\n", pico_err);
 	}
 
-	printf("%i bytes sent.\n", bytes);
+	// printf("%i bytes sent.\n", bytes);
 
 	data_ptr += bytes;
 	if (data_ptr < end_ptr)
@@ -88,7 +91,7 @@ void
 cb_tcpconnect(uint16_t ev, struct pico_socket *s) {
 	int r = 0;
 
-	printf("tcpecho> wakeup ev=%u\n", ev);
+	// printf("tcpecho> wakeup ev=%u\n", ev);
 
 	if (ev & PICO_SOCK_EV_CONN) {
 		struct pico_socket *sock_a = { 0 };
@@ -96,23 +99,12 @@ cb_tcpconnect(uint16_t ev, struct pico_socket *s) {
 		uint16_t port              = 0;
 		char peer[30]              = { 0 };
 		int yes                    = 1;
-		int imgsize = 0;
+
 
 		sock_a = pico_socket_accept(s, &orig, &port);
 		pico_ipv4_to_string(peer, orig.addr);
 		printf("Connection established with %s:%d.\n", peer, short_be(port));
 		pico_socket_setoption(sock_a, PICO_TCP_NODELAY, &yes);
-
-		rawdata = grab_raw_data(1, 1, &imgsize);	
-
-		if(!rawdata) {
-			printf("RAW DATA NOT RETRIEVED\n");
-		} else {
-			printf("RAW DATA RETRIEVED\n");
-		}
-
-		data_ptr = rawdata;
-		end_ptr = rawdata + imgsize; 
 
 		flag |= PICO_SOCK_EV_WR;
 	}
@@ -136,13 +128,29 @@ cb_tcpconnect(uint16_t ev, struct pico_socket *s) {
 	}
 
 	if (ev & PICO_SOCK_EV_WR) {
+		if (!is_sending_image)
+		{
+			int imgsize= 0;
+			rawdata = grab_raw_data(1, 1, &imgsize);	
+
+			if(!rawdata) {
+				printf("RAW DATA NOT RETRIEVED\n");
+			} else {
+				printf("RAW DATA RETRIEVED\n");
+			}
+
+			data_ptr = rawdata;
+			end_ptr = rawdata + imgsize;	
+			is_sending_image=1;
+		}
 		r = send_tcpimg(s);
 
 		if (r == 0) {
 			flag |= PICO_SOCK_EV_WR;
 		} else {
 			flag &= (~PICO_SOCK_EV_WR);
-			pico_socket_close(s);
+			is_sending_image= 0;
+			//pico_socket_close(s);
 		}
 	}
 }
@@ -152,9 +160,9 @@ setup_tcp_app() {
 	struct pico_socket *listen_socket;
 	struct pico_ip4 address;
 	uint16_t port;
-	int ret, yes;
+	int ret, no;
 
-	yes = 1;
+	no = 0;
 	port = short_be(atoi(config.port));
 	bzero(&address, sizeof(address));
 
@@ -164,7 +172,7 @@ setup_tcp_app() {
 		exit(1);
 	}
 
-	pico_socket_setoption(listen_socket, PICO_TCP_NODELAY, &yes);
+	pico_socket_setoption(listen_socket, PICO_TCP_NODELAY, &no);
 
 	ret = pico_socket_bind(listen_socket, &address, &port);
 	if (ret < 0) {
@@ -280,8 +288,8 @@ init_picotcp() {
 int
 main(int argc, char *argv[]) {
 
-	if (argc < 4) {
-		printf("usage: %s if_name if_mac if_addr port\n", argv[0]);
+	if (argc < 5) {
+		printf("usage: %s if_name if_mac if_addr port cam_device\n", argv[0]);
 		exit(1);
 	}
 
@@ -289,11 +297,11 @@ main(int argc, char *argv[]) {
 	config.if_mac  = argv[2];
 	config.if_addr = argv[3];
 	config.port    = argv[4];
-
+	config.cam_device = strtol(argv[5], NULL, 10);
 	init_picotcp();
 	setup_tcp_app();
 
-	if (setup_capture(0))
+	if (setup_capture(config.cam_device))
 		return -1;
 
 	pico_stack_loop();
