@@ -304,7 +304,7 @@ main(int argc, char *argv[]) {
 	init_picotcp();
 	setup_tcp_app();
 
-	if (setup_capture(config.cam_device))
+	if (setup_capture(config.cam_device, config.scale_factor))
 		return -1;
 
 	pico_stack_loop();

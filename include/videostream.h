@@ -4,7 +4,7 @@
 #include <cv.h>
 #include <highgui.h>
 
-int setup_capture(const int device);
+int setup_capture(const int device, const double scale);
 
 IplImage* grab_image(const double scale, const int convert_grayscale);
 
