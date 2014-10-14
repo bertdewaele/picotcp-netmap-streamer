@@ -1,2 +1,3 @@
-nm-picotcp
+nm-picotcp-*
+deps/netmap/*
 *.o
