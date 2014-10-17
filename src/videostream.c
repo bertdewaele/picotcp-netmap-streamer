@@ -8,11 +8,12 @@
 static char* window_name = "Video Streamer";
 static CvCapture* capture = 0;
 
+unsigned char* raw_data= NULL;
 IplImage *img_gray = NULL;
 IplImage *img_resize = NULL; 
 
 int
-setup_capture(const int device, const double scale)
+setup_capture(const int device, const double scale, const int gray_scale)
 {
 	capture = cvCaptureFromCAM(device);
 	if (!capture) {
@@ -21,12 +22,34 @@ setup_capture(const int device, const double scale)
 	}
 
 	IplImage* image = cvQueryFrame(capture);
+
+	if(!image){
+		printf("image not retrieved.\n");
+		return -1;
+	}
+	printf("img WIDTH: %i\n", image->width);
+	printf("img HEIGHT: %i\n", image->height);
+	printf("img nchannels: %i\n", image->nChannels);
+	printf("img depth: %i\n", image->depth);
 	
-	img_gray = cvCreateImage(cvGetSize(image), IPL_DEPTH_8U, 1);
-	
+
+
 	CvSize size = {.width =  scale * image->width, .height = scale * image->height};
-	img_resize = cvCreateImage(size, IPL_DEPTH_8U, 1);
+
+
+	if (gray_scale)
+	{
+		img_gray = cvCreateImage(cvGetSize(image), IPL_DEPTH_8U, 1);
+		img_resize = cvCreateImage(size, IPL_DEPTH_8U, 1);
+
+	} else {
+		img_resize = cvCreateImage(size, IPL_DEPTH_8U, 3);
+
+	}
 	
+	
+	raw_data = malloc(image->imageSize*sizeof(unsigned char));
+
 	return 0;
 }
 
@@ -37,10 +60,8 @@ IplImage* grab_image(const double scale, const int convert_grayscale)
 	if (!image) {
 		printf("Capture of image failed.\n");
 		return NULL;
-	} else {
-		printf("Image captured.\n");
 	}
-	
+
 	if (convert_grayscale) {
 		cvCvtColor(image, img_gray, CV_RGB2GRAY);
 		image = img_gray;
@@ -66,11 +87,9 @@ grab_raw_data(const double scale, const int convert_grayscale, int* imagesize)
 	
 	*imagesize = image->imageSize;
 	
-	unsigned char* rawdata = malloc(image->imageSize*sizeof(unsigned char));
-	printf("Image size: %i\n", image->imageSize);
-	cvGetRawData(image, &rawdata, NULL, NULL);
+	cvGetRawData(image, &raw_data, NULL, NULL);
 
-	return rawdata;
+	return raw_data;
 }
 
 int
