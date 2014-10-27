@@ -32,32 +32,34 @@
 
 #include <pico_ipv4.h>
 #include <pico_stack.h>
-#include <pico_socket.h>	
+#include <pico_socket.h>
 #include <pico_socket_udp.h>
 
 #include <cv.h>
 #include <highgui.h>
-
-#define WIDTH		(320)
-#define HEIGHT		(240)
-//#define WIDTH		(320*2)
-//#define HEIGHT		(240*2)
-#define IMAGE_SIZE (WIDTH*HEIGHT*3)
+#include <getopt.h>
 
 #define MTU_UDP_ETH	1472
+#define NUMBER_OF_IMG_ATTRIB 4
+#define UDP_RECV_BUF_SIZE 1024*64
+#define REQUEST_STRING "request stream"
+
+
 
 #ifdef DEBUG_STREAM
 #define DEBUG(x) printf x
-#else 
+#else
 #define DEBUG(x) do {} while (0)
 #endif
 
 static unsigned char* payload_ptr = NULL;
-static unsigned char* raw_data = NULL; 
+static unsigned char* raw_data = NULL;
 static unsigned char* data_ptr = NULL;
 static unsigned char* end_ptr = NULL;
+static uint32_t WIDTH= 0, HEIGHT= 0, NCHANN= 0, DEPTH= 0, IMAGE_SIZE=0;
+static uint8_t new_connect=1;
 
-static const CvSize frame_size = {.width = WIDTH, .height = HEIGHT};
+static CvSize frame_size= { 0 };
 static IplImage *img;
 
 static int is_retrieving_img = 0;
@@ -86,9 +88,9 @@ free_resources(void)
 static void
 handle_image_buffer(void)
 {
-  	cvSetData(img, (void*)raw_data, WIDTH*3);
-  	cvShowImage(window_name, img);
-  	cvWaitKey(1);
+	cvSetData(img, (void*)raw_data, WIDTH*NCHANN);
+	cvShowImage(window_name, img);
+	cvWaitKey(1);
 }
 
 int
@@ -96,25 +98,68 @@ recv_tcpimg(struct pico_socket* s) {
 
 	int bytes = pico_socket_read(s, (void*)data_ptr, MTU_UDP_ETH);
 	if(bytes < 0) {
-  		printf("Pico socket read failed. error = %i\n", pico_err);
-	}	
-	
+		printf("Pico socket read failed. error = %i\n", pico_err);
+	}
+
 	DEBUG(("Bytes received = %i\n", bytes));
-  	data_ptr += bytes;
+	data_ptr += bytes;
 
 	return data_ptr < end_ptr ? 1 : 0;
 }
 
+void init_image_attrib(struct pico_socket *s)
+{
+	uint16_t image_attrib[NUMBER_OF_IMG_ATTRIB];
+	int bytes = -1;
+
+	bytes = pico_socket_read(s, (void*)image_attrib, NUMBER_OF_IMG_ATTRIB*sizeof(image_attrib[0]));
+	if(bytes < 0) {
+		printf("Pico socket read failed. error = %i\n", pico_err);
+		exit(-1);
+	}
+
+	WIDTH=image_attrib[0];
+	HEIGHT=image_attrib[1];
+	NCHANN=image_attrib[2];
+	DEPTH=image_attrib[3];
+
+	printf("\n\nimg WIDTH: %i\n", WIDTH);
+	printf("img HEIGHT: %i\n", HEIGHT);
+	printf("img nchannels: %i\n", NCHANN);
+	printf("img depth: %i\n\n", DEPTH);
+
+	frame_size.width = WIDTH;
+	frame_size.height = HEIGHT;
+	IMAGE_SIZE= WIDTH*HEIGHT*NCHANN;
+
+
+	img = cvCreateImageHeader(frame_size, DEPTH, NCHANN);
+}
+
+
 void
 cb_tcpconnect(uint16_t ev, struct pico_socket *s) {
-  
+
 	if (ev & PICO_SOCK_EV_ERR) {
 		printf("Socket error received: %s. Bailing out.\n", strerror(pico_err));
-		free_resources();		
+		free_resources();
 		exit(1);
 	}
 
 	if (ev & PICO_SOCK_EV_RD) {
+		if (new_connect)
+			{
+				init_image_attrib(s);
+
+				new_connect= 0;
+
+				raw_data = (unsigned char*) malloc(IMAGE_SIZE);
+
+				end_ptr = raw_data + IMAGE_SIZE;
+				payload_ptr = raw_data;
+				data_ptr = raw_data;
+			}
+
 
 
 		if (!is_retrieving_img) {
@@ -127,7 +172,12 @@ cb_tcpconnect(uint16_t ev, struct pico_socket *s) {
 			is_retrieving_img = 0;
 		}
 	}
-} void
+
+}
+
+
+
+void
 setup_tcp_app() {
 	struct pico_socket *client_socket;
 	struct pico_ip4 address;
@@ -143,7 +193,7 @@ setup_tcp_app() {
 		exit(1);
 	}
 
-	int rec = 1024*64;	
+	int rec = UDP_RECV_BUF_SIZE;
 	pico_setsockopt_udp(client_socket, PICO_SOCKET_OPT_RCVBUF, (void*)&rec);
 
 	ret = pico_socket_bind(client_socket, &address, &port);
@@ -151,7 +201,7 @@ setup_tcp_app() {
 		printf("cannot bind socket to port %u: %s", short_be(port), strerror(pico_err));
 		exit(1);
 	}
-	
+
 	pico_string_to_ipv4(config.if_addr,  &address.addr);
 
 	ret = pico_socket_connect(client_socket, &address.addr, port);
@@ -160,18 +210,10 @@ setup_tcp_app() {
 		exit(1);
 	}
 
-	raw_data = (unsigned char*) malloc(IMAGE_SIZE);
-	end_ptr = raw_data + IMAGE_SIZE;
-	payload_ptr = raw_data;
-	data_ptr = raw_data;
-
-	//img = cvCreateImageHeader(frame_size, IPL_DEPTH_8U, 1);
-	img = cvCreateImageHeader(frame_size, IPL_DEPTH_8U, 3);
-	//img = cvCreateImageHeader(frame_size, 8, 3);
 	cvNamedWindow(window_name, CV_WINDOW_AUTOSIZE);
-	
-	char c = 'c';
-	int bytes = pico_socket_send(client_socket, (void*)&c, 1);
+
+	char* request = REQUEST_STRING;
+	int bytes = pico_socket_send(client_socket, (void*)request, strlen(request));
 	if (bytes < 0) {
 		printf("Could not send peer info\n");
 		exit(-2);
@@ -260,43 +302,82 @@ pico_netmap_create(char *interface, char *name, uint8_t *mac) {
 
 void
 init_picotcp() {
-  	struct ether_addr mac;
-  	struct pico_device *dev = NULL;
-  	struct pico_ip4 addr;
-  	struct pico_ip4 netm;
+	struct ether_addr mac;
+	struct pico_device *dev = NULL;
+	struct pico_ip4 addr;
+	struct pico_ip4 netm;
 
-  	ether_aton_r(config.if_mac, &mac);
+	ether_aton_r(config.if_mac, &mac);
 
-  	pico_stack_init();
+	pico_stack_init();
 
-  	dev = pico_netmap_create(config.if_name, "eth_if", (uint8_t *) &mac);
+	dev = pico_netmap_create(config.if_name, "eth_if", (uint8_t *) &mac);
 
-  	pico_string_to_ipv4("10.0.0.100",  &addr.addr);
-  	pico_string_to_ipv4("255.255.255.0", &netm.addr);
-  	pico_ipv4_link_add(dev, addr, netm);
+	pico_string_to_ipv4("10.0.0.100",  &addr.addr);
+	pico_string_to_ipv4("255.255.255.0", &netm.addr);
+	pico_ipv4_link_add(dev, addr, netm);
 }
 
 int
 main(int argc, char *argv[]) {
+	char c= 0;
+	int option_index= 0;
+	int req_arg_count=0;
+	printf("starting....\n");
 
-	if (argc < 4) {
-    		printf("usage: %s if_name if_mac if_addr port\n", argv[0]);
-    		exit(1);
-  	}
+	static struct option long_options[]=
+		{
+			{"if_name", required_argument, 0, 'i'},
+			{"if_mac", required_argument, 0, 'm'},
+			{"if_addr", required_argument, 0, 'a'},
+			{"port", required_argument, 0, 'p'},
+			{0, 0, 0, 0}
+		};
 
-  	config.if_name = argv[1];
-  	config.if_mac  = argv[2];
-  	config.if_addr = argv[3];
-  	config.port    = argv[4];
+	while ( (c = getopt_long (argc, argv, "i:m:a:p:",
+				  long_options, &option_index)) != -1)
+		{
 
-  	init_picotcp();
+			switch (c)
+				{
+				case 'i':
+					config.if_name = optarg;
+					req_arg_count++;
+					break;
 
-  	setup_tcp_app();
+				case 'm':
+					config.if_mac  = optarg;
+					req_arg_count++;
+					break;
 
-  	pico_stack_loop();
+				case 'a':
+					config.if_addr = optarg;
+					req_arg_count++;
+					break;
+
+				case 'p':
+					req_arg_count++;
+					config.port    = optarg;
+					break;
+				default:
+					abort ();
+				}
+		}
+	if (req_arg_count !=4)
+		{
+			printf("Not enough required arguments: if_name if_mac if_addr port\n");
+			exit(-1);
+		}
+	printf("args parsed\n");
+
+
+	init_picotcp();
+
+	setup_tcp_app();
+
+	pico_stack_loop();
 
 	free_resources();
 
-  	return 0;
+	return 0;
 }
-
