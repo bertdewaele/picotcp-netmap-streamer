@@ -52,10 +52,6 @@ static unsigned char* end_ptr = NULL;
 static uint32_t peer= 0;
 static uint16_t port= 0;
 
-static uint8_t new_connect=1;
-
-static uint32_t WIDTH= -1, HEIGHT= -1, NCHANN= -1, DEPTH= -1, IMAGE_SIZE=-1;
-
 #ifdef DEBUG_STREAM
 #define DEBUG(x) printf x
 #else
