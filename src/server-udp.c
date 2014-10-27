@@ -135,7 +135,7 @@ void send_image_info(struct pico_socket *s)
 	printf("info about img sent\n");
 }
 
-uint8_t is_valid_request(struct pico_socket *s)
+uint8_t check_if_valid_request_and_init_peerinfo(struct pico_socket *s)
 {
 	char recvbuf[REQUEST_LENGTH+1]; // +1 for terminator
 	int read=-1;
@@ -172,7 +172,7 @@ cb_udpconnect(uint16_t ev, struct pico_socket *s) {
 	if (ev & PICO_SOCK_EV_RD) {
 		int imgsize= 0;
 
-		if (!is_valid_request(s))
+		if (!check_if_valid_request_and_init_peerinfo(s))
 			{
 				printf("Bad request\n");
 				exit(-1);
