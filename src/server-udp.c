@@ -171,8 +171,7 @@ cb_udpconnect(uint16_t ev, struct pico_socket *s) {
 
 	if (ev & PICO_SOCK_EV_RD) {
 		int imgsize= 0;
-		int r=-1;
-
+		
 		if (!is_valid_request(s))
 			{
 				printf("Bad request\n");
@@ -192,7 +191,7 @@ cb_udpconnect(uint16_t ev, struct pico_socket *s) {
 			data_ptr = raw_image_data;
 			end_ptr = raw_image_data + imgsize;
 
-			r= send_udpimg(s);
+			send_udpimg(s);
 
 
 			int count= 10;
