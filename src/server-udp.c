@@ -41,19 +41,27 @@
 #include <getopt.h>
 
 #define BSIZE   2048
+#define NUMBER_OF_ATTRIB 4
+#define REQUEST_STRING "request stream"
+#define REQUEST_LENGTH (sizeof(REQUEST_STRING))
 
 static unsigned char* raw_image_data = NULL;
 static unsigned char* data_ptr = NULL;
 static unsigned char* end_ptr = NULL;
-static int is_sending_image=0;
-static clock_t begin= 0, end= 0;
-
 
 static uint32_t peer= 0;
 static uint16_t port= 0;
 
-static int total_bytes_send= 0;
-static int packet_counter =0;
+static uint8_t new_connect=1;
+
+static uint32_t WIDTH= -1, HEIGHT= -1, NCHANN= -1, DEPTH= -1, IMAGE_SIZE=-1;
+
+#ifdef DEBUG_STREAM
+#define DEBUG(x) printf x
+#else
+#define DEBUG(x) do {} while (0)
+#endif
+
 
 struct {
 	char *if_mac;
@@ -62,7 +70,7 @@ struct {
 	char *port;
 	int cam_device;
 	double scale_factor;
-	int gray_scale;
+	int color_disable;
 } config;
 
 void setup_udp_app();
@@ -75,43 +83,90 @@ free_resources(void)
 	if(raw_image_data){
 		free(raw_image_data);
 	}
-	
+
 	clean_up_stream();
-	
-	
 }
 
 
 int
 send_udpimg(struct pico_socket* s) {
-        
-	while(data_ptr < end_ptr)
-	{
-		pico_stack_tick();
-		
-		int bytes = pico_socket_sendto(s, (void*)data_ptr, (int)(end_ptr-data_ptr), &peer, port);
-		//printf("packet #%i send.\n", ++packet_counter);
 
-		if(bytes < 0) {
-			printf("Pico socket write failed. error = %i\n", pico_err);
-			break;
+	while(data_ptr < end_ptr)
+		{
+			pico_stack_tick();
+
+			int bytes = pico_socket_sendto(s, (void*)data_ptr, (int)(end_ptr-data_ptr), &peer, port);
+			//DEBUG("packet #%i send.\n", ++packet_counter);
+
+			if(bytes < 0) {
+				printf("Pico socket write failed. error = %i\n", pico_err);
+				break;
+			}
+
+			//DEBUG("%i bytes sent.\n", bytes);
+
+			data_ptr += bytes;
+
+		}
+	return (data_ptr == end_ptr)?1:0;
+}
+
+
+void send_image_info(struct pico_socket *s)
+{
+
+	IplImage* temp= grab_image(config.scale_factor, config.color_disable);
+	int bytes=-1;
+	uint16_t image_attrib[NUMBER_OF_ATTRIB];
+
+	image_attrib[0]= temp->width;
+	image_attrib[1]= temp->height;
+	image_attrib[2]= temp->nChannels;
+	image_attrib[3]= temp->depth;
+
+	bytes= pico_socket_sendto(s, (void*)image_attrib, NUMBER_OF_ATTRIB*sizeof(image_attrib[0]), &peer, port);
+	if(bytes < 0) {
+		printf("Pico socket write failed. error = %i\n", pico_err);
+		exit(-1);
+	}
+
+	printf("\n\nimg WIDTH: %i\n", temp->width);
+	printf("img HEIGHT: %i\n", temp->height);
+	printf("img nchannels: %i\n", temp->nChannels);
+	printf("img depth: %i\n\n", temp->depth);
+
+
+	printf("info about img sent\n");
+}
+
+uint8_t is_valid_request(struct pico_socket *s)
+{
+	char recvbuf[REQUEST_LENGTH+1]; // +1 for terminator
+	int read=-1;
+
+	read = pico_socket_recvfrom(s, recvbuf, REQUEST_LENGTH, &peer, &port);
+	if (read < 0)
+		{
+
+			printf("Pico socket recvfrom failed. error = %i\n", pico_err);
+			printf("pico_err: %s\n", strerror(pico_err));
+			return -1;
 		}
 
-		//printf("%i bytes sent.\n", bytes);
+	recvbuf[read]='\n';
 
-		data_ptr += bytes;
-		//total_bytes_send+=bytes;
-		
-	}
-	return (data_ptr == end_ptr)?1:0;
-	
+
+	if (!(strncmp(recvbuf, REQUEST_STRING, strlen(REQUEST_STRING)) == 0))
+		{
+			printf("Wrong request string\n");
+			return -1;
+		}
+	return 1;
 }
+
 
 void
 cb_udpconnect(uint16_t ev, struct pico_socket *s) {
-	int r = 0;
-
-	//printf("udpecho> wakeup ev=%u\n", ev);
 
 	if (ev & PICO_SOCK_EV_ERR) {
 		printf("Socket error received: %s. Bailing out.\n", strerror(pico_err));
@@ -120,22 +175,19 @@ cb_udpconnect(uint16_t ev, struct pico_socket *s) {
 
 	if (ev & PICO_SOCK_EV_RD) {
 		int imgsize= 0;
-		char recvbuf[2];
-		int read=-1;
-		
-		read = pico_socket_recvfrom(s, recvbuf, 1, &peer, &port);
-		if (read < 0) {
-			printf("Pico socket recvfrom failed. error = %i\n", pico_err);
-			printf("pico_err: %s\n", strerror(pico_err));
-			exit(-3);
-		}
-		recvbuf[read]='\n';
-		//printf("received: '%s', read: %i\n", recvbuf, read);
-		//printf("peer retrieved\n");
+		int r=-1;
+
+		if (!is_valid_request(s))
+			{
+				printf("Bad request\n");
+				exit(-1);
+			}
+
+		send_image_info(s);
+		printf("Sending stream....\n");
 
 		do{
-			raw_image_data = grab_raw_data(config.scale_factor, config.gray_scale, &imgsize);	
-			//printf("send new img.\n");
+			raw_image_data = grab_raw_data(config.scale_factor, config.color_disable, &imgsize);
 
 			if(!raw_image_data) {
 				exit(-1);
@@ -145,18 +197,16 @@ cb_udpconnect(uint16_t ev, struct pico_socket *s) {
 			end_ptr = raw_image_data + imgsize;
 
 			r= send_udpimg(s);
-			//printf("img sent.\n");
-			//printf("total_bytes_send: %i\n", total_bytes_send);
 
 
 			int count= 10;
-			
+
 			while( --count>0)
 				{
 					pico_stack_tick();
 				}
 			//exit(0); // only send one image
-			
+
 		}
 		while(1);
 	}
@@ -167,11 +217,8 @@ setup_udp_app() {
 	struct pico_socket *listen_socket;
 	struct pico_ip4 address;
 	uint16_t port;
-	int ret, no, yes;
+	int ret;
 
-	no = 0;
-	yes = 1;
-	
 	port = short_be(atoi(config.port));
 	bzero(&address, sizeof(address));
 
@@ -291,9 +338,13 @@ int
 main(int argc, char *argv[]) {
 	char c= 0;
 	int option_index= 0;
-	
+	int req_arg_count=0;
 	printf("starting....\n");
-	
+
+	//default init of optional args
+	config.scale_factor=1.0;
+	config.color_disable=0;
+
 	static struct option long_options[]=
 		{
 			{"if_name", required_argument, 0, 'i'},
@@ -305,79 +356,70 @@ main(int argc, char *argv[]) {
 			{"scale_factor", required_argument, 0, 's'},
 			{"color_disable", required_argument, 0, 'c'},
 			{0, 0, 0, 0}
-			
-			
+
+
 		};
-	
+
 	while ( (c = getopt_long (argc, argv, "i:m:a:p:d:s:c:",
-				  long_options, &option_index)) != -1)
-	{
-		
-		switch (c)
+							  long_options, &option_index)) != -1)
 		{
-		case 'i':
-			printf ("option -p with value `%s'\n", optarg);
-			break;
 
-		case 'm':
-			printf ("option -p with value `%s'\n", optarg);
-			break;
+			switch (c)
+				{
+				case 'i':
+					config.if_name = optarg;
+					req_arg_count++;
+					break;
 
-		case 'a':
-			printf ("option -p with value `%s'\n", optarg);
-			break;
+				case 'm':
+					config.if_mac  = optarg;
+					req_arg_count++;
+					break;
 
-		case 'p':
-			printf ("option -p with value `%s'\n", optarg);
-			break;
+				case 'a':
+					config.if_addr = optarg;
+					req_arg_count++;
+					break;
 
-		case 'd':
-			printf ("option -d with value `%s'\n", optarg);
-			break;
+				case 'p':
+					req_arg_count++;
+					config.port    = optarg;
+					break;
 
-		case 's':
-			printf ("option -f with value `%s'\n", optarg);
-			break;
+				case 'd':
+					config.cam_device = strtol(optarg, NULL, 10);
+					req_arg_count++;
+					break;
 
-		case 'c':
-			printf ("option -c with value `%s'\n", optarg);
-		        
-			break;
+				case 's':
+					sscanf(optarg, "%lf", &(config.scale_factor));
+					break;
 
-		default:
-			abort ();
+				case 'c':
+					config.color_disable = strtol(optarg, NULL, 10);
+					break;
+
+				default:
+					abort ();
+				}
 		}
-	}
-
+	if (req_arg_count !=5)
+		{
+			printf("Not enough required arguments: --if_name --if_mac --if_addr --port --cam_device (--scale_factor --color_disable)\n");
+			exit(-1);
+		}
 	printf("args parsed\n");
-	
 
-/*
-	if (argc < 7) {
-		printf("usage: %s if_name if_mac if_addr port cam_device scale_factor color_disable\n", argv[0]);
-		exit(1);
-	}
-	
-	config.if_name = argv[1];
-	config.if_mac  = argv[2];
-	config.if_addr = argv[3];
-	config.port    = argv[4];
-	config.cam_device = strtol(argv[5], NULL, 10);
-	sscanf(argv[6], "%lf", &(config.scale_factor));
-	config.gray_scale = strtol(argv[7], NULL, 10);
-	*/
-	
-	/*if (setup_capture(config.cam_device, config.scale_factor))
-		return -1;
+	if (setup_capture(config.cam_device, config.scale_factor, config.color_disable))
+		exit(-2);
 
 	init_picotcp();
 	setup_udp_app();
 
 	printf("started.\n");
 	pico_stack_loop();
-	
-        free_resources();
-	*/
+
+	free_resources();
+
 	return 0;
 }
-

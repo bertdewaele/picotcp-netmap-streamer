@@ -27,12 +27,6 @@ setup_capture(const int device, const double scale, const int gray_scale)
 		printf("image not retrieved.\n");
 		return -1;
 	}
-	printf("img WIDTH: %i\n", image->width);
-	printf("img HEIGHT: %i\n", image->height);
-	printf("img nchannels: %i\n", image->nChannels);
-	printf("img depth: %i\n", image->depth);
-	
-
 
 	CvSize size = {.width =  scale * image->width, .height = scale * image->height};
 
@@ -67,7 +61,7 @@ IplImage* grab_image(const double scale, const int convert_grayscale)
 		image = img_gray;
 	}
 	
-	if (scale != 1) {
+	if (scale != 1.0) {
 		cvResize(image, img_resize, CV_INTER_LINEAR); 
 		image = img_resize;
 	}
