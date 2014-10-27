@@ -42,6 +42,7 @@
 
 #define BSIZE   2048
 #define NUMBER_OF_ATTRIB 4
+#define MTU_UDP_ETH	1472
 #define REQUEST_STRING "request stream"
 #define REQUEST_LENGTH (sizeof(REQUEST_STRING))
 
@@ -86,12 +87,11 @@ free_resources(void)
 
 int
 send_udpimg(struct pico_socket* s) {
-
 	while(data_ptr < end_ptr)
 		{
 			pico_stack_tick();
 
-			int bytes = pico_socket_sendto(s, (void*)data_ptr, (int)(end_ptr-data_ptr), &peer, port);
+			int bytes = pico_socket_sendto(s, (void*)data_ptr, MTU_UDP_ETH, &peer, port);
 			//DEBUG("packet #%i send.\n", ++packet_counter);
 
 			if(bytes < 0) {
@@ -171,7 +171,7 @@ cb_udpconnect(uint16_t ev, struct pico_socket *s) {
 
 	if (ev & PICO_SOCK_EV_RD) {
 		int imgsize= 0;
-		
+
 		if (!is_valid_request(s))
 			{
 				printf("Bad request\n");
@@ -275,7 +275,6 @@ pico_netmap_poll(struct pico_device *dev, int loop_score) {
 void
 pico_netmap_destroy(struct pico_device *dev) {
 	struct pico_device_netmap *netmap = (struct pico_device_netmap *) dev;
-
 	nm_close(netmap->conn);
 }
 
