@@ -38,12 +38,21 @@
 #include <cv.h>
 #include <highgui.h>
 #include <getopt.h>
+#include <time.h>
 
 #define MTU_UDP_ETH	1472
 #define NUMBER_OF_IMG_ATTRIB 4
 #define UDP_RECV_BUF_SIZE 1024*64
 #define REQUEST_STRING "request stream"
 
+//// TEST
+
+static uint32_t peer= 0;
+static uint16_t port= 0;
+
+struct pico_ip_mreq mreq_multicast = {{0},{0}};
+//#define DEBUG_STREAM
+//// END TEST
 
 
 #ifdef DEBUG_STREAM
@@ -72,7 +81,7 @@ struct {
 	char *port;
 } config;
 
-void setup_tcp_app();
+void setup_udp_app();
 void pico_netmap_destroy(struct pico_device *dev);
 struct pico_device *pico_netmap_create(char *interface, char *name, uint8_t *mac);
 
@@ -94,16 +103,32 @@ handle_image_buffer(void)
 }
 
 int
-recv_tcpimg(struct pico_socket* s) {
+recv_udpimg(struct pico_socket* s) {
 
-	int bytes = pico_socket_read(s, (void*)data_ptr, MTU_UDP_ETH);
+	//int bytes = pico_socket_read(s, (void*)data_ptr, MTU_UDP_ETH);
+	int bytes = pico_socket_recvfrom(s, (void*)data_ptr, MTU_UDP_ETH,  &mreq_multicast.mcast_group_addr.addr , &port);
 	if(bytes < 0) {
 		printf("Pico socket read failed. error = %i\n", pico_err);
 	}
 
 	DEBUG(("Bytes received = %i\n", bytes));
 	data_ptr += bytes;
+	/////////
+	char *end="ENDING";
+	if (bytes == strlen(end))
+		{
+			return 0; // hack
 
+			*data_ptr='\n';
+			
+			//printf("data ptr: '%s'\n",data_ptr);
+			
+			if(strncmp(data_ptr, end, strlen(end)) == 0) {
+				printf("end received");
+				return 0;
+			}
+		}
+	//////////
 	return data_ptr < end_ptr ? 1 : 0;
 }
 
@@ -112,7 +137,8 @@ void init_image_attrib(struct pico_socket *s)
 	uint16_t image_attrib[NUMBER_OF_IMG_ATTRIB];
 	int bytes = -1;
 
-	bytes = pico_socket_read(s, (void*)image_attrib, NUMBER_OF_IMG_ATTRIB*sizeof(image_attrib[0]));
+	bytes = pico_socket_recvfrom(s, (void*)image_attrib, NUMBER_OF_IMG_ATTRIB*sizeof(image_attrib[0]), &peer, &port);
+	//bytes = pico_socket_read(s, (void*)image_attrib, NUMBER_OF_IMG_ATTRIB*sizeof(image_attrib[0]));
 	if(bytes < 0) {
 		printf("Pico socket read failed. error = %i\n", pico_err);
 		exit(-1);
@@ -138,8 +164,8 @@ void init_image_attrib(struct pico_socket *s)
 
 
 void
-cb_tcpconnect(uint16_t ev, struct pico_socket *s) {
-
+cb_udpconnect(uint16_t ev, struct pico_socket *s) {
+	
 	if (ev & PICO_SOCK_EV_ERR) {
 		printf("Socket error received: %s. Bailing out.\n", strerror(pico_err));
 		free_resources();
@@ -147,18 +173,37 @@ cb_tcpconnect(uint16_t ev, struct pico_socket *s) {
 	}
 
 	if (ev & PICO_SOCK_EV_RD) {
-		if (new_connect)
-			{
-				init_image_attrib(s);
+		if (new_connect) {
+			init_image_attrib(s);
 
-				new_connect= 0;
+			///////////testing
+			int ret= -1;
 
-				raw_data = (unsigned char*) malloc(IMAGE_SIZE);
+			struct pico_ip4 inaddr_dst, inaddr_link;
 
-				end_ptr = raw_data + IMAGE_SIZE;
-				payload_ptr = raw_data;
-				data_ptr = raw_data;
+			pico_string_to_ipv4("224.7.7.7", &inaddr_dst.addr);
+			pico_string_to_ipv4("10.0.0.100", &inaddr_link.addr);
+			mreq_multicast.mcast_group_addr = inaddr_dst;
+			mreq_multicast.mcast_link_addr = inaddr_link;
+			ret = pico_socket_setoption(s, PICO_IP_ADD_MEMBERSHIP, &mreq_multicast);
+			if (ret < 0){
+				printf("add membership error\n");
+				printf("error: %s\n", strerror(pico_err));
+				exit(-1);
+
 			}
+
+			//////////end testing
+
+			new_connect= 0;
+
+			raw_data = (unsigned char*) malloc(IMAGE_SIZE);
+
+			end_ptr = raw_data + IMAGE_SIZE;
+			payload_ptr = raw_data;
+			data_ptr = raw_data;
+		}
+
 
 
 
@@ -167,7 +212,7 @@ cb_tcpconnect(uint16_t ev, struct pico_socket *s) {
 			is_retrieving_img = 1;
 		}
 
-		if (!recv_tcpimg(s)) {
+		if (!recv_udpimg(s)) {
 			handle_image_buffer();
 			is_retrieving_img = 0;
 		}
@@ -178,7 +223,7 @@ cb_tcpconnect(uint16_t ev, struct pico_socket *s) {
 
 
 void
-setup_tcp_app() {
+setup_udp_app() {
 	struct pico_socket *client_socket;
 	struct pico_ip4 address;
 	uint16_t port;
@@ -187,7 +232,7 @@ setup_tcp_app() {
 	port = short_be(atoi(config.port));
 	bzero(&address, sizeof(address));
 
-	client_socket = pico_socket_open(PICO_PROTO_IPV4, PICO_PROTO_UDP, &cb_tcpconnect);
+	client_socket = pico_socket_open(PICO_PROTO_IPV4, PICO_PROTO_UDP, &cb_udpconnect);
 	if (!client_socket) {
 		printf("cannot open socket: %s", strerror(pico_err));
 		exit(1);
@@ -373,7 +418,7 @@ main(int argc, char *argv[]) {
 
 	init_picotcp();
 
-	setup_tcp_app();
+	setup_udp_app();
 
 	pico_stack_loop();
 
