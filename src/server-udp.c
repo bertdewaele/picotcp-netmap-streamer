@@ -59,6 +59,12 @@ static uint16_t port= 0;
 #define DEBUG(x) do {} while (0)
 #endif
 
+///test
+struct pico_ip_mreq mreq_multicast  = {{0},{0}};
+uint8_t first_connect = 1;
+uint32_t imgsize= 0;
+///END test
+
 
 struct {
 	char *if_mac;
@@ -84,18 +90,21 @@ free_resources(void)
 	clean_up_stream();
 }
 
-
+/* TODO:  add more meaningfull return value, maybe error code (see bytes < 0)?*/
 int
 send_udpimg(struct pico_socket* s) {
+	int bytes = -1;
 	while(data_ptr < end_ptr)
 		{
-			pico_stack_tick();
+			//pico_stack_tick(); // causes jump to handle_clients because handle_clients is on the timer
+			//int bytes = pico_socket_sendto(s, (void*)data_ptr, MTU_UDP_ETH, &peer, port);
 
-			int bytes = pico_socket_sendto(s, (void*)data_ptr, MTU_UDP_ETH, &peer, port);
+			bytes = pico_socket_sendto(s, (void*)data_ptr, MTU_UDP_ETH, &mreq_multicast.mcast_group_addr.addr , port);
 			//DEBUG("packet #%i send.\n", ++packet_counter);
 
 			if(bytes < 0) {
 				printf("Pico socket write failed. error = %i\n", pico_err);
+				printf("pico_err: %s\n", strerror(pico_err));
 				break;
 			}
 
@@ -104,6 +113,11 @@ send_udpimg(struct pico_socket* s) {
 			data_ptr += bytes;
 
 		}
+	/////////////// sync
+	char *end="ENDING";
+	bytes= pico_socket_sendto(s, (void*)end, strlen(end), &mreq_multicast.mcast_group_addr.addr , port);
+	///////////////
+	
 	return (data_ptr == end_ptr)?1:0;
 }
 
@@ -160,6 +174,41 @@ uint8_t check_if_valid_request_and_init_peerinfo(struct pico_socket *s)
 	return 1;
 }
 
+void
+pico_stack_tick_for(int count) {
+	while( --count>0) {
+		pico_stack_tick();
+	}
+
+}
+
+void
+handle_clients(pico_time time, void* arg) {
+    //printf("handling....\n");
+	struct pico_socket* s = (struct pico_socket*) arg;
+	IGNORE_PARAMETER(time);
+	
+	raw_image_data = grab_raw_data(config.scale_factor, config.color_disable, &imgsize);
+
+	if(!raw_image_data) {
+		exit(-1);
+	}
+
+	data_ptr = raw_image_data;
+	end_ptr = raw_image_data + imgsize;
+
+	send_udpimg(s);
+
+	//    pico_stack_tick_for(10);
+/*
+	int count= 10;
+
+	while( --count>0) {
+		pico_stack_tick();
+		}*/
+	pico_timer_add(1, handle_clients, s);
+}
+
 
 void
 cb_udpconnect(uint16_t ev, struct pico_socket *s) {
@@ -170,17 +219,37 @@ cb_udpconnect(uint16_t ev, struct pico_socket *s) {
 	}
 
 	if (ev & PICO_SOCK_EV_RD) {
-		int imgsize= 0;
 
-		if (!check_if_valid_request_and_init_peerinfo(s))
-			{
-				printf("Bad request\n");
-				exit(-1);
-			}
+
+		if (!check_if_valid_request_and_init_peerinfo(s)) {
+			printf("Bad request\n");
+			exit(-1);
+		}
 
 		send_image_info(s);
-		printf("Sending stream....\n");
 
+		/////////testing
+
+			int ret= -1;
+			struct pico_ip4 inaddr_dst, inaddr_link;
+			
+			pico_string_to_ipv4("224.7.7.7", &inaddr_dst.addr);
+			pico_string_to_ipv4("10.0.0.6", &inaddr_link.addr);
+			mreq_multicast.mcast_group_addr = inaddr_dst;
+			mreq_multicast.mcast_link_addr = inaddr_link;
+		////////END testing
+		printf("new connect\n");
+		
+		//printf("Sending stream....\n");
+
+		if (first_connect) {
+			first_connect=0;
+			pico_timer_add(1, handle_clients, s);
+			printf("first connect\n");
+			
+		}
+		
+		/*
 		do{
 			raw_image_data = grab_raw_data(config.scale_factor, config.color_disable, &imgsize);
 
@@ -203,7 +272,7 @@ cb_udpconnect(uint16_t ev, struct pico_socket *s) {
 			//exit(0); // only send one image
 
 		}
-		while(1);
+		while(1);*/
 	}
 }
 
@@ -229,7 +298,7 @@ setup_udp_app() {
 		exit(1);
 	}
 
-
+	/* TODO: SET TTL TO A NUMBER, DEFAULT FOR MULTICAST IS 1 */
 	return;
 }
 
